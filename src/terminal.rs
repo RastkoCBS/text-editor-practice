@@ -31,7 +31,7 @@ impl Terminal {
     }
 
     pub fn clear_screen() {
-        //print!("{}", terminal::clear::All);
+        print!("{}", termion::clear::All);
     }
 
     pub fn cursor_position(x: u16, y: u16) {

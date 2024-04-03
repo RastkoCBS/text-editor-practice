@@ -1,8 +1,12 @@
 use crate::Terminal;
-use std::io::{stdin, stdout, Error, Write};            
+use std::io::{stdin, stdout, Error, Write};
+use std::cmp::{min};            
 use termion::{cursor::DetectCursorPos, event::Key};            
 use termion::input::TermRead;            
 use termion::raw::IntoRawMode;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub struct Editor {
     should_quit: bool,
     terminal: Terminal,
@@ -64,9 +68,16 @@ impl Editor {
     }
 
     fn draw_rows(&self) {
-        for _ in 0..self.terminal.size().height - 1 {
+        let height = self.terminal.size().height;
+        for row in 0..height - 1 {
             Terminal::clear_current_line();
-            println!("~\r");
+            if row == height / 3 {
+                let msg = format!("Editor -- version {}", VERSION);
+                let width = min(self.terminal.size().width as usize, msg.len());
+                println!("{}", &msg[..width]);
+            } else {
+                println!("~\r");
+            }
         }
     }
 
