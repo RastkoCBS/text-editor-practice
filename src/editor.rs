@@ -6,10 +6,14 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
+pub struct Position {
+    pub x: usize,
+    pub y: usize,
+}
 pub struct Editor {
     should_quit: bool,
     terminal: Terminal,
+    cursor_position: Position,
 }
 
 impl Editor {
@@ -35,7 +39,7 @@ impl Editor {
         //print!("{}{}", termion::clear::All, termion::cursor::Goto(1,1));
         Terminal::cursor_hide();
         Terminal::clear_screen();
-        Terminal::cursor_position(0, 0);
+        Terminal::cursor_position(&Position{x: 0, y: 0});
 
         if self.should_quit {
             Terminal::clear_screen();
@@ -43,7 +47,7 @@ impl Editor {
         } else {
             self.draw_rows();
             //print!("{}", termion::cursor::Goto(1,1));
-            Terminal::cursor_position(0, 0);
+            Terminal::cursor_position(&self.cursor_position);
         }
         //stdout().flush()
         Terminal::cursor_show();
@@ -53,7 +57,8 @@ impl Editor {
     pub fn default() -> Self {
         Self { 
             should_quit: false,
-            terminal: Terminal::default().expect("Failed to initialie terminal")
+            terminal: Terminal::default().expect("Failed to initialie terminal"),
+            cursor_position: Position{x: 0, y: 0},
         }
     }
 
@@ -62,23 +67,62 @@ impl Editor {
 
         match key_pressed {
             Key::Ctrl('q') => self.should_quit = true,
+            Key::Up | Key::Down | Key::Left | Key::Right => self.move_cursor(key_pressed),
             _ => (),
         }
         Ok(())
     }
+
 
     fn draw_rows(&self) {
         let height = self.terminal.size().height;
         for row in 0..height - 1 {
             Terminal::clear_current_line();
             if row == height / 3 {
-                let msg = format!("Editor -- version {}", VERSION);
-                let width = min(self.terminal.size().width as usize, msg.len());
-                println!("{}", &msg[..width]);
+                self.draw_welcome();
             } else {
                 println!("~\r");
             }
         }
+    }
+
+    fn draw_welcome(&self) {
+        let mut msg = format!("Editor -- version {}", VERSION);
+        let width = self.terminal.size().width as usize;
+        let len = msg.len();
+        let padding = width.saturating_sub(len) / 2;
+        let spaces = " ".repeat(padding.saturating_sub(1));
+
+        msg = format!("~{}{}", spaces, msg);
+        msg.truncate(width);
+        println!("{}\r", msg);
+    }
+
+    fn move_cursor(&mut self, key: Key) {
+        let Position{mut x, mut y} = self.cursor_position;
+        let size = self.terminal.size();
+        let (height, width) = (size.height.saturating_sub(1) as usize, size.width.saturating_sub(1) as usize);
+        match key {
+            Key::Up => y = y.saturating_sub(1),
+            Key::Down => {
+                if y < height {
+                    y = y.saturating_add(1);
+                }
+            },
+            Key::Left => x = x.saturating_sub(1),
+            Key::Right => {
+                if x < width {
+                    x = x.saturating_add(1);
+                }
+            },
+            // Key::Home => x = 0,
+            // Key::End => x = width,
+            // Key::PageUp => y = 0,
+            // Key::PageDown => y = height,
+            _ => (),
+        }
+
+        self.cursor_position = Position{x, y}
     }
 
 }

@@ -3,6 +3,7 @@ use termion::event::Key;
 use termion::input::TermRead;  
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::clear;
+use crate::editor::Position;
 
 pub struct Size {
     pub width: u16,
@@ -34,9 +35,14 @@ impl Terminal {
         print!("{}", termion::clear::All);
     }
 
-    pub fn cursor_position(x: u16, y: u16) {
-        let x = x.saturating_add(1);
-        let y = y.saturating_add(1);
+    pub fn cursor_position(pos: &Position) {
+        let Position{mut x, mut y} = pos;
+
+        x = x.saturating_add(1);
+        y = y.saturating_add(1);
+
+        let x = x as u16;
+        let y = y as u16; 
 
         print!("{}", termion::cursor::Goto(x,y));
     }
