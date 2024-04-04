@@ -5,13 +5,17 @@ use crate::Terminal;
 use crate::Document;
 use crate::Row;
 use std::io::{stdin, stdout, Error, Write};
-use std::cmp::min;   
-use std::env;         
-use termion::{cursor::DetectCursorPos, event::Key};            
-use termion::input::TermRead;            
+use std::cmp::min;
+use std::env;
+use std::time::{Instant, Duration};
+use termion::{cursor::DetectCursorPos, event::Key, color};            
+use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
+const STATUS_FG_COLOR: color::Rgb = color::Rgb(63, 63, 63);
+const STATUS_BG_COLOR: color::Rgb = color::Rgb(239, 239, 239);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Default)]
 pub struct Position {
     pub x: usize,
@@ -23,12 +27,25 @@ pub struct Editor {
     cursor_position: Position,
     document: Document,
     offset: Position,
+    status_message: StatusMessage,
+}
+
+struct StatusMessage {
+    time: Instant,
+    text: String,
+}
+
+impl StatusMessage {
+    fn from(message: String) -> Self {
+        Self {
+            time: Instant::now(),
+            text: message,
+        }
+    }
 }
 
 impl Editor {
     pub fn run(&mut self) {
-        //let _std_output = stdout().into_raw_mode().unwrap();
-
         loop {
             if let Err(error) = self.refresh_screen() {
                 error_handler(error);
@@ -45,7 +62,6 @@ impl Editor {
     }
 
     fn refresh_screen(&self) -> Result<(), Error> {
-        //print!("{}{}", termion::clear::All, termion::cursor::Goto(1,1));
         Terminal::cursor_hide();
         Terminal::clear_screen();
         Terminal::cursor_position(&Position::default());
@@ -55,19 +71,32 @@ impl Editor {
             println!("Kraj!");
         } else {
             self.draw_rows();
-            //print!("{}", termion::cursor::Goto(1,1));
-            Terminal::cursor_position(&self.cursor_position);
+            self.draw_status_bar();
+            self.draw_status_bar();
+            Terminal::cursor_position(&Position {
+                x: self.cursor_position.x.saturating_sub(self.offset.x),
+                y: self.cursor_position.y.saturating_sub(self.offset.y),
+            });
         }
-        //stdout().flush()
+
         Terminal::cursor_show();
         Terminal::flush()
     }
 
     pub fn default() -> Self {
         let args: Vec<String> = env::args().collect();
+        let mut initial_status = String::new();
+
         let document = if args.len() > 1 {
             let file_name = &args[1];
-            Document::open(&file_name).unwrap_or_default()
+
+            let doc = Document::open(&file_name);
+            if doc.is_ok() {
+                doc.unwrap()
+            } else {
+                initial_status = format!("ERR: Could not open file: {}", file_name);
+                Document::default()
+            }
         } else {
             Document::default()
         };
@@ -78,6 +107,7 @@ impl Editor {
             document,
             cursor_position: Position::default(),
             offset: Position::default(),
+            status_message: StatusMessage::from(initial_status),
         }
     }
 
@@ -99,13 +129,16 @@ impl Editor {
         let start = self.offset.x;
         let end = self.offset.x + width;
         let row: String = row.render(start, end);
+
         println!("{}\r", row)
     }
 
     fn draw_rows(&self) {
         let height = self.terminal.size().height;
-        for terminal_row in 0..height - 1 {
+
+        for terminal_row in 0..height {
             Terminal::clear_current_line();
+
             if let Some(temp) = self.document.row(terminal_row as usize + self.offset.y) {
                 self.draw_row(temp);
             } else if self.document.is_empty() && terminal_row == height / 3 {
@@ -125,7 +158,49 @@ impl Editor {
 
         msg = format!("~{}{}", spaces, msg);
         msg.truncate(width);
+
         println!("{}\r", msg);
+    }
+
+    fn draw_status_bar(&self) {
+        let mut status;
+        let width = self.terminal.size().width as usize;
+
+        let mut file_name = "[No name]".to_string();
+
+        if let Some(temp) = &self.document.file_name {
+            file_name = temp.clone();
+            file_name.truncate(20);
+        }
+
+        status = format!("{} - {} lines", file_name, self.document.len());
+
+        let line_indicator = format!("{}/{}", self.cursor_position.y.saturating_add(1), self.document.len());
+        let len = status.len() + line_indicator.len();
+
+        if width > len {
+            status.push_str(&"".repeat(width - len));
+        }
+        status.truncate(width);
+
+        Terminal::set_bg_color(STATUS_BG_COLOR);
+        Terminal::set_fg_color(STATUS_FG_COLOR);
+        println!("{} \r", status);
+
+        Terminal::reset_bg_color();
+        Terminal::reset_fg_color();
+    }
+
+    fn draw_msg_bar(&self) {
+        Terminal::clear_current_line();
+
+        let msg = &self.status_message;
+
+        if Instant::now() - msg.time < Duration::new(5, 0) {
+            let mut text = msg.text.clone();
+            text.truncate(self.terminal.size().width as usize);
+            print!("{}", text);
+        }
     }
 
     fn scroll(&mut self) {
@@ -149,9 +224,16 @@ impl Editor {
     }
 
     fn move_cursor(&mut self, key: Key) {
+        let terminal_height = self.terminal.size().height as usize;
         let Position{mut x, mut y} = self.cursor_position;
         let size = self.terminal.size();
-        let (height, width) = (self.document.len(), size.width.saturating_sub(1) as usize);
+        let height = self.document.len();
+        let mut width = if let Some(row) = self.document.row(y) {
+            row.len()
+        } else {
+            0
+        };
+
         match key {
             Key::Up => y = y.saturating_sub(1),
             Key::Down => {
@@ -159,17 +241,54 @@ impl Editor {
                     y = y.saturating_add(1);
                 }
             },
-            Key::Left => x = x.saturating_sub(1),
+            Key::Left => {
+                if x > 0 {
+                    x -= 1;
+                } else if y > 0 {
+                    y -= 1;
+
+                    if let Some(row) = self.document.row(y) {
+                        x = row.len();
+                    } else {
+                        x = 0;
+                    }
+                }
+            },
             Key::Right => {
                 if x < width {
-                    x = x.saturating_add(1);
+                    x += 1;
+                } else if y < height {
+                    y += 1;
+                    x = 0;
                 }
             },
             // Key::Home => x = 0,
             // Key::End => x = width,
-            // Key::PageUp => y = 0,
-            // Key::PageDown => y = height,
+            // Key::PageUp => {
+            //     if y > terminal_height {
+            //         y = y - terminal_height;
+            //     } else {
+            //         y = 0;
+            //     }
+            // },
+            // Key::PageDown => {
+            //     if y.saturating_add(terminal_height) < height {
+            //         y = y + terminal_height as usize;
+            //     } else {
+            //         y = height;
+            //     }
+            // },
             _ => (),
+        }
+
+        width = if let Some(row) = self.document.row(y) {
+            row.len()
+        } else {
+            0
+        };
+
+        if x > width {
+            x = width;
         }
 
         self.cursor_position = Position{x, y}
@@ -178,7 +297,6 @@ impl Editor {
 }
 
 fn error_handler(e: Error) {
-    //print!("{}", termion::clear::All);
     Terminal::clear_screen();
     panic!("{}", e);
 }

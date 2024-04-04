@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 mod editor;
 mod terminal;
 mod document;
