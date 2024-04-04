@@ -1,11 +1,18 @@
+use crate::document;
+use crate::row;
+use crate::terminal;
 use crate::Terminal;
+use crate::Document;
+use crate::Row;
 use std::io::{stdin, stdout, Error, Write};
-use std::cmp::{min};            
+use std::cmp::min;   
+use std::env;         
 use termion::{cursor::DetectCursorPos, event::Key};            
 use termion::input::TermRead;            
 use termion::raw::IntoRawMode;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[derive(Default)]
 pub struct Position {
     pub x: usize,
     pub y: usize,
@@ -14,6 +21,8 @@ pub struct Editor {
     should_quit: bool,
     terminal: Terminal,
     cursor_position: Position,
+    document: Document,
+    offset: Position,
 }
 
 impl Editor {
@@ -39,7 +48,7 @@ impl Editor {
         //print!("{}{}", termion::clear::All, termion::cursor::Goto(1,1));
         Terminal::cursor_hide();
         Terminal::clear_screen();
-        Terminal::cursor_position(&Position{x: 0, y: 0});
+        Terminal::cursor_position(&Position::default());
 
         if self.should_quit {
             Terminal::clear_screen();
@@ -55,10 +64,20 @@ impl Editor {
     }
 
     pub fn default() -> Self {
+        let args: Vec<String> = env::args().collect();
+        let document = if args.len() > 1 {
+            let file_name = &args[1];
+            Document::open(&file_name).unwrap_or_default()
+        } else {
+            Document::default()
+        };
+
         Self { 
             should_quit: false,
             terminal: Terminal::default().expect("Failed to initialie terminal"),
-            cursor_position: Position{x: 0, y: 0},
+            document,
+            cursor_position: Position::default(),
+            offset: Position::default(),
         }
     }
 
@@ -70,15 +89,26 @@ impl Editor {
             Key::Up | Key::Down | Key::Left | Key::Right => self.move_cursor(key_pressed),
             _ => (),
         }
+
+        self.scroll();
         Ok(())
     }
 
+    pub fn draw_row(&self, row: &Row) {
+        let width = self.terminal.size().width as usize;
+        let start = self.offset.x;
+        let end = self.offset.x + width;
+        let row: String = row.render(start, end);
+        println!("{}\r", row)
+    }
 
     fn draw_rows(&self) {
         let height = self.terminal.size().height;
-        for row in 0..height - 1 {
+        for terminal_row in 0..height - 1 {
             Terminal::clear_current_line();
-            if row == height / 3 {
+            if let Some(temp) = self.document.row(terminal_row as usize + self.offset.y) {
+                self.draw_row(temp);
+            } else if self.document.is_empty() && terminal_row == height / 3 {
                 self.draw_welcome();
             } else {
                 println!("~\r");
@@ -98,10 +128,30 @@ impl Editor {
         println!("{}\r", msg);
     }
 
+    fn scroll(&mut self) {
+        let Position {x, y} = self.cursor_position;
+        let width = self.terminal.size().width as usize;
+        let height = self.terminal.size().height as usize;
+
+        let mut offset = &mut self.offset;
+
+        if y < offset.y {
+            offset.y = y;
+        } else if y >= offset.y.saturating_add(height) {
+            offset.y = y.saturating_sub(height).saturating_add(1);
+        }
+
+        if x < offset.x {
+            offset.x = x;
+        } else if x >= offset.x.saturating_add(width) {
+            offset.x = x.saturating_sub(width).saturating_add(1);
+        }
+    }
+
     fn move_cursor(&mut self, key: Key) {
         let Position{mut x, mut y} = self.cursor_position;
         let size = self.terminal.size();
-        let (height, width) = (size.height.saturating_sub(1) as usize, size.width.saturating_sub(1) as usize);
+        let (height, width) = (self.document.len(), size.width.saturating_sub(1) as usize);
         match key {
             Key::Up => y = y.saturating_sub(1),
             Key::Down => {
