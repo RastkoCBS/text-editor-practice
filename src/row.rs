@@ -1,7 +1,10 @@
 use std::cmp::min;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::Position;
+
 #[derive(Debug)]
+#[derive(Default)]
 pub struct Row {
     text: String,
     len: usize,
@@ -34,6 +37,22 @@ impl Row {
         }
 
         result
+    }
+
+    pub fn insert(&mut self, at: usize, c: char) {
+        if at >= self.len() {
+            self.text.push(c);
+        } else {
+            let mut result: String = self.text[..].graphemes(true).take(at).collect();
+            let remainder: String = self.text[..].graphemes(true).skip(at).collect();
+
+            result.push(c);
+            result.push_str(&remainder);
+
+            self.text = result;
+        }
+
+        self.update_len();
     }
 
     pub fn len(&self) -> usize {

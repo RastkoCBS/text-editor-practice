@@ -116,6 +116,7 @@ impl Editor {
 
         match key_pressed {
             Key::Ctrl('q') => self.should_quit = true,
+            Key::Char(c) => self.document.insert(&self.cursor_position, c),
             Key::Up | Key::Down | Key::Left | Key::Right => self.move_cursor(key_pressed),
             _ => (),
         }
