@@ -12,7 +12,7 @@ pub struct Row {
 
 impl From<&str> for Row {
     fn from(slice: &str) -> Self {
-        let mut row = Self { 
+        let mut row = Self {
             text: String::from(slice), 
             len: 0,
         };
@@ -53,6 +53,34 @@ impl Row {
         }
 
         self.update_len();
+    }
+
+    pub fn delete(&mut self, at: usize) {
+        if at >= self.len() {
+            return;
+        } else {
+            let mut result: String = self.text[..].graphemes(true).take(at).collect();
+            let remainder: String = self.text[..].graphemes(true).skip(at + 1).collect();
+
+            result.push_str(&remainder); 
+
+            self.text = result;
+        }
+        self.update_len();
+    }
+
+    pub fn append(&mut self, new: &Self) {
+        self.text = format!("{}{}", self.text, new.text);
+        self.update_len();
+    }
+
+    pub fn split(&mut self, at:usize) -> Self {
+        let start: String = self.text[..].graphemes(true).take(at).collect();
+        let remainder: String = self.text[..].graphemes(true).skip(at).collect();
+
+        self.text = start;
+        self.update_len();
+        Self::from(&remainder[..])
     }
 
     pub fn len(&self) -> usize {
