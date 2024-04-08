@@ -6,6 +6,7 @@ use std::fs;
 pub struct Document {
     rows: Vec<Row>,
     pub file_name: Option<String>,
+    dirty: bool,
 }
 
 impl Document {
@@ -20,10 +21,16 @@ impl Document {
         Ok(Self { 
             rows, 
             file_name: Some(filename.to_string()),
+            dirty: false,
         })
     }
 
     pub fn insert(&mut self, at: &Position, c: char) {
+        if at.y > self.len() {
+            return;
+        }
+        self.dirty = true;
+
         if c == '\n' {
             self.insert_newline(at);
             return;
@@ -33,40 +40,32 @@ impl Document {
             let mut row = Row::default();
             row.insert(0, c);
             self.rows.push(row);
-        } else if at.y < self.len() {
+        } else {
             let row = self.rows.get_mut(at.y).unwrap();
             row.insert(at.x, c);
         }
     }
 
     pub fn insert_newline(&mut self, at: &Position) {
-        if at.y > self.len() {
-            return;
-        }
-
-        // let new_row = Row::default();
-        // if at.y == self.len() || at.y.saturating_add(1) == self.len() {
-        //     self.rows.push(new_row);
-        // } else {
-        //     self.rows.insert(at.y + 1, new_row);
-        // }
-
         if at.y == self.len() {
-            self.rows.push(Row::default());
+            //self.rows.push(Row::default());
             return;
         }
 
         let new_row = self.rows.get_mut(at.y).unwrap().split(at.x);
+        #[allow(clippy::integet_arithmetic)]
         self.rows.insert(at.y + 1, new_row);       
     }
 
+    #[allow(clippy::integet_arithmetic)]
     pub fn delete(&mut self, at: &Position) {
         let len = self.len();
 
         if at.y == self.len() {
             return;
         }
-        if at.x == self.rows.get_mut(at.y).unwrap().len() && at.y < len - 1 {
+        self.dirty = true;
+        if at.x == self.rows.get_mut(at.y).unwrap().len() && at.y + 1 < len {
             let next_row = self.rows.remove(at.y + 1);
             let row = self.rows.get_mut(at.y).unwrap();
             row.append(&next_row);
@@ -74,6 +73,19 @@ impl Document {
             let row = self.rows.get_mut(at.y).unwrap();
             row.delete(at.x);
         }
+    }
+
+    pub fn save(&mut self) -> Result<(), Error> {
+        if let Some(file_name) = &self.file_name {
+            let mut file = fs::File::create(file_name)?;
+
+            for row in &self.rows {
+                file.write_all(row.as_bytes())?;
+                file.write_all(b"\n")?;
+            }
+            self.dirty = false;
+        }
+        Ok(())
     }
 
     pub fn row(&self, index: usize) -> Option<&Row> {
@@ -86,5 +98,9 @@ impl Document {
 
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 }

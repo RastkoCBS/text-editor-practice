@@ -27,6 +27,7 @@ impl Row {
         let start = min(start, end);
 
         let mut result = String::new();
+        #[allow(clippy::integer_arithmetic)]
         for grapheme in self.text[..].graphemes(true).skip(start).take(end - start) {
 
             if grapheme == "\t" {
@@ -54,7 +55,8 @@ impl Row {
 
         self.update_len();
     }
-
+    
+    #[allow(clippy::integer_arithmetic)]
     pub fn delete(&mut self, at: usize) {
         if at >= self.len() {
             return;
@@ -93,5 +95,9 @@ impl Row {
 
     pub fn update_len(&mut self) {
         self.len = self.text[..].graphemes(true).count();
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.text.as_bytes()
     }
 }

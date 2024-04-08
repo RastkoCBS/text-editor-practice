@@ -44,7 +44,7 @@ impl Terminal {
         let x = x as u16;
         let y = y as u16; 
 
-        print!("{}", termion::cursor::Goto(x,y - 1));
+        print!("{}", termion::cursor::Goto(x,y));
     }
 
     pub fn flush() -> Result<(), Error> {

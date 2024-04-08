@@ -7,6 +7,7 @@ use crate::Row;
 use std::io::{stdin, stdout, Error, Write};
 use std::cmp::min;
 use std::env;
+use std::string::String;
 use std::time::{Instant, Duration};
 use termion::{cursor::DetectCursorPos, event::Key, color};            
 use termion::input::TermRead;
@@ -15,6 +16,7 @@ use termion::raw::IntoRawMode;
 const STATUS_FG_COLOR: color::Rgb = color::Rgb(63, 63, 63);
 const STATUS_BG_COLOR: color::Rgb = color::Rgb(239, 239, 239);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const QUIT_TIMES: u8 = 3;
 
 #[derive(Default)]
 pub struct Position {
@@ -28,8 +30,10 @@ pub struct Editor {
     document: Document,
     offset: Position,
     status_message: StatusMessage,
+    quit_times: u8,
 }
 
+#[derive(PartialEq)]
 struct StatusMessage {
     time: Instant,
     text: String,
@@ -72,7 +76,8 @@ impl Editor {
         } else {
             self.draw_rows();
             self.draw_status_bar();
-            self.draw_status_bar();
+            self.draw_msg_bar();
+
             Terminal::cursor_position(&Position {
                 x: self.cursor_position.x.saturating_sub(self.offset.x),
                 y: self.cursor_position.y.saturating_sub(self.offset.y),
@@ -83,9 +88,27 @@ impl Editor {
         Terminal::flush()
     }
 
+    fn save(&mut self) {
+        if self.document.file_name.is_none() {
+            let new_name = self.prompt("Save as: ").unwrap_or(None);
+            
+            if new_name.is_none() {
+                self.status_message = StatusMessage::from("Save aborted. ".to_string());
+                return;
+            }
+            self.document.file_name = new_name;
+        }
+
+        if self.document.save().is_ok() {
+            self.status_message = StatusMessage::from("File saved!".to_string());
+        } else {
+            self.status_message = StatusMessage::from("Error writing file!".to_string());
+        }
+    }
+
     pub fn default() -> Self {
         let args: Vec<String> = env::args().collect();
-        let mut initial_status = String::new();
+        let mut initial_status = String::from("Ctrl + S => Save | Ctrl + Q = quit");
 
         let document = if args.len() > 1 {
             let file_name = &args[1];
@@ -108,6 +131,7 @@ impl Editor {
             cursor_position: Position::default(),
             offset: Position::default(),
             status_message: StatusMessage::from(initial_status),
+            quit_times: QUIT_TIMES,
         }
     }
 
@@ -115,11 +139,21 @@ impl Editor {
         let key_pressed = Terminal::read_key()?;
 
         match key_pressed {
-            Key::Ctrl('q') => self.should_quit = true,
+            Key::Ctrl('q') => {
+                if self.quit_times > 0 && self.document.is_dirty() {
+                    self.status_message = StatusMessage::from(format!("WARNING! Unsaved changes!"));
+
+                    self.quit_times -= 1;
+                    
+                    return  Ok(());
+                }
+                self.should_quit = true;
+            },
             Key::Char(c) => {
                 self.document.insert(&self.cursor_position, c);
                 self.move_cursor(Key::Right);
             },
+            Key::Ctrl('s') => self.save(),
             Key::Delete => self.document.delete(&self.cursor_position),
             Key::Backspace => {
                 if self.cursor_position.x > 0 || self.cursor_position.y > 0 {
@@ -132,13 +166,50 @@ impl Editor {
         }
 
         self.scroll();
+
+        if self.quit_times < QUIT_TIMES {
+            self.quit_times = QUIT_TIMES;
+            self.status_message = StatusMessage::from(String::new());
+        }
+
         Ok(())
+    }
+
+    fn prompt(&mut self, prompt: &str) -> Result<Option<String>, Error> {
+        let mut result: String = String::new();
+
+        loop {
+            self.status_message = StatusMessage::from(format!("{}{}", prompt, result));
+            self.refresh_screen()?;
+
+            match Terminal::read_key()? {
+                Key::Backspace => result.truncate(result.len().saturating_sub(1)),
+                Key::Char('\n') => break,
+                Key::Char(c) => {
+                    if !c.is_control() {
+                        result.push(c);
+                    }
+                },
+                Key::Esc => {
+                    result.truncate(0);
+                    break;
+                },
+                _ => (),
+            }
+        }
+
+        //self.status_message = StatusMessage::from(String::new());
+
+        if result.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(result))
     }
 
     pub fn draw_row(&self, row: &Row) {
         let width = self.terminal.size().width as usize;
         let start = self.offset.x;
-        let end = self.offset.x + width;
+        let end = self.offset.x.saturating_add(width);
         let row: String = row.render(start, end);
 
         println!("{}\r", row)
@@ -150,7 +221,7 @@ impl Editor {
         for terminal_row in 0..height {
             Terminal::clear_current_line();
 
-            if let Some(temp) = self.document.row(terminal_row as usize + self.offset.y) {
+            if let Some(temp) = self.document.row(self.offset.y.saturating_add(terminal_row as usize)) {
                 self.draw_row(temp);
             } else if self.document.is_empty() && terminal_row == height / 3 {
                 self.draw_welcome();
@@ -177,6 +248,12 @@ impl Editor {
         let mut status;
         let width = self.terminal.size().width as usize;
 
+        let modified_indicator = if self.document.is_dirty() {
+            "(modified)"
+        } else {
+            ""
+        };
+
         let mut file_name = "[No name]".to_string();
 
         if let Some(temp) = &self.document.file_name {
@@ -184,20 +261,21 @@ impl Editor {
             file_name.truncate(20);
         }
 
-        status = format!("{} - {} lines", file_name, self.document.len());
+        status = format!("{} - {} lines {}", file_name, self.document.len(), modified_indicator);
 
         let line_indicator = format!("{}/{}", self.cursor_position.y.saturating_add(1), self.document.len());
+        #[allow(clippy::integer_arithmetic)]
         let len = status.len() + line_indicator.len();
 
         if width > len {
-            status.push_str(&"".repeat(width - len));
+            status.push_str(&" ".repeat(width.saturating_sub(len)));
         }
         status.truncate(width);
-
+        
         Terminal::set_bg_color(STATUS_BG_COLOR);
         Terminal::set_fg_color(STATUS_FG_COLOR);
         println!("{} \r", status);
-
+        
         Terminal::reset_bg_color();
         Terminal::reset_fg_color();
     }
@@ -273,22 +351,6 @@ impl Editor {
                     x = 0;
                 }
             },
-            // Key::Home => x = 0,
-            // Key::End => x = width,
-            // Key::PageUp => {
-            //     if y > terminal_height {
-            //         y = y - terminal_height;
-            //     } else {
-            //         y = 0;
-            //     }
-            // },
-            // Key::PageDown => {
-            //     if y.saturating_add(terminal_height) < height {
-            //         y = y + terminal_height as usize;
-            //     } else {
-            //         y = height;
-            //     }
-            // },
             _ => (),
         }
 
